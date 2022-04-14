@@ -1,7 +1,6 @@
-from rest_framework import response
 from django.http import HttpResponse
 import stripe
-from django.contrib.auth.models import User
+
 from django.core.mail import send_mail
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import render, redirect
@@ -59,6 +58,31 @@ class CreateCheckOutSession(APIView):
             return Response({'msg':'something went wrong while creating stripe session','error':str(e)}, status=500)
         
 
+#custom payment flow 
+class CreatePaymentIntent(APIView):
+    def post(self, request,*args, **kwargs):
+        prod_id=request.data
+        product=Product.objects.get(id=prod_id)
+        try:
+            intent=stripe.PaymentIntent.create(
+               amount=int(product.price) * 100,
+               currency='usd',
+               automatic_payment_methods={
+                'enabled': True,
+                },
+                metadata={
+                    'product_id':product.id
+                } 
+            )
+            return Response({'clientSecret':intent['client_secret']}, status=200)
+        
+        except Exception as e:
+            return Response({'error':str(e)}, status=400)
+
+
+
+
+
 
 @csrf_exempt
 def stripe_webhook_view(request):
@@ -77,23 +101,17 @@ def stripe_webhook_view(request):
         # Invalid signature
         return Response(status=400)
 
-    if event['type'] == 'checkout.session.completed':
-        session = event['data']['object']
+    if event['type'] == 'payment_intent.succeeded':
+        intent = event['data']['object']
 
-        print(session)
-        customer_email=session['customer_details']['email']
-        prod_id=session['metadata']['product_id']
+        print(intent)
+        payment_intent=intent.charges.data[0]
+        # customer_email=session['customer_details']['email']
+        prod_id=payment_intent['metadata']['product_id']
         product=Product.objects.get(id=prod_id)
-        #sending confimation mail
-        send_mail(
-            subject="payment sucessful",
-            message=f"thank for your purchase your order is ready.  download url {product.book_url}",
-            recipient_list=[customer_email],
-            from_email="henry2techgroup@gmail.com"
-        )
-
-        #creating payment history
-        # user=User.objects.get(email=customer_email) or None
+        
+        # #creating payment history
+        # # user=User.objects.get(email=customer_email) or None
 
         PaymentHistory.objects.create(product=product, payment_status=True)
     # Passed signature verification
